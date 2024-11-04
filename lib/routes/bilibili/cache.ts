@@ -6,6 +6,7 @@ import { config } from '@/config';
 import logger from '@/utils/logger';
 import puppeteer from '@/utils/puppeteer';
 import { JSDOM } from 'jsdom';
+import wait from '@/utils/wait';
 
 const disableConfigCookie = false;
 
@@ -24,6 +25,19 @@ const getCookie = () => {
     }
     const key = 'bili-cookie';
     return cache.tryGet(key, async () => {
+        let round = 0;
+        while (cache.get("bili-cookie-updating", false) === "1") {
+            round++;
+            await wait(200);
+            logger.debug(`wait bili-cookie-updating ${round * 200}ms`);
+        }
+        const fetch_again = cache.get(key);
+        if (fetch_again) {
+            logger.debug(`skip bili-cookie-updating`);
+            return fetch_again;
+        }
+        logger.debug(`lock bili-cookie-updating`);
+        cache.set("bili-cookie-updating", "1", 5);
         const browser = await puppeteer({
             stealth: true,
         });
@@ -43,12 +57,15 @@ const getCookie = () => {
         const cookieString = await waitForRequest;
         logger.debug(`Got bilibili cookie: ${cookieString}`);
         await browser.close();
+        cache.set(key, cookieString);
+        cache.set("bili-cookie-updating");
         return cookieString;
     });
 };
 
 const getRenderData = (uid) => {
     const key = 'bili-web-render-data';
+    logger.debug(`Trying bilibili getRenderData: ${uid}`);
     return cache.tryGet(key, async () => {
         const cookie = await getCookie();
         const { data: response } = await got(`https://space.bilibili.com/${uid}`, {
@@ -63,6 +80,7 @@ const getRenderData = (uid) => {
         const innerText = scriptElement ? scriptElement.textContent || '{}' : '{}';
         const renderData = JSON.parse(decodeURIComponent(innerText));
         const accessId = renderData.access_id;
+        logger.debug(`Got bilibili accessId: ${accessId}`);
         return accessId;
     });
 };
